@@ -51,6 +51,7 @@ export default function Home() {
     const [documents, setDocuments] = useState<Document[]>([]);
     const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(null);
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    const [, forceUpdate] = useState(0);
 
     // Load documents from localStorage on mount
     useEffect(() => {
@@ -273,7 +274,8 @@ export default function Home() {
 
     const renderSegments = () => {
         const segmentsWithOpacity = textManagerRef.current.getSegmentsWithOpacity(fadeLength, cursorPosition);
-        return segmentsWithOpacity.map(({ segment, opacity }, index) => {
+        const lastIndex = segmentsWithOpacity.length - 1;
+        const segmentElements = segmentsWithOpacity.map(({ segment, opacity }, index) => {
             const isSelected = index === cursorPosition;
             const isAccepted = selectedSegments.has(segment.id);
             const acceptedIndex = isAccepted ? Array.from(selectedSegments).indexOf(segment.id) : -1;
@@ -388,6 +390,44 @@ export default function Home() {
                 );
             }
         });
+        // Add buttons at the end of edit view if at the last segment
+        if (
+            viewMode === 'edit' &&
+            cursorPosition === lastIndex
+        ) {
+            segmentElements.push(
+                <div key="end-edit-buttons" style={{
+                    display: 'flex',
+                    flexDirection: 'row',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    gap: '1rem',
+                    marginTop: '3rem',
+                    position: 'fixed',
+                    left: '50%',
+                    top: '70%',
+                    transform: 'translate(-50%, 0)',
+                    zIndex: 20,
+                }}>
+                    <Button
+                        variant="soft"
+                        onClick={() => {
+                            setViewMode('document');
+                            forceUpdate(n => n + 1);
+                        }}
+                    >
+                        Go to Document View
+                    </Button>
+                    <Button
+                        variant="soft"
+                        onClick={handleCopy}
+                    >
+                        {copySuccess ? 'Copied!' : 'Copy to Clipboard'}
+                    </Button>
+                </div>
+            );
+        }
+        return segmentElements;
     };
 
     // Add effect to scroll selected text into view
@@ -414,10 +454,6 @@ export default function Home() {
                     // Move to next paragraph if available
                     if (cursorPosition < textManagerRef.current.getSegments().length - 1) {
                         setCursorPosition(prev => prev + 1);
-                    } else {
-                        // Reached the end, switch to document view
-                        setViewMode('document');
-                        setCursorPosition(0);
                     }
                 }
             } else if (e.key === 'Tab' && suggestions.length > 0) {
@@ -429,6 +465,11 @@ export default function Home() {
             } else if (e.key === 'Enter' && selectedSuggestion !== -1) {
                 e.preventDefault();
                 acceptSuggestion(suggestions[selectedSuggestion]);
+            } else if (viewMode === 'edit' && e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (cursorPosition > 0) {
+                    setCursorPosition(prev => prev - 1);
+                }
             }
         };
         window.addEventListener('keydown', handleKeyDown);
@@ -565,7 +606,10 @@ export default function Home() {
                                         ✏️ Edit View
                                     </Button>
                                     <Button
-                                        onClick={() => setViewMode('document')}
+                                        onClick={() => {
+                                            setViewMode('document');
+                                            forceUpdate(n => n + 1);
+                                        }}
                                         variant="soft"
                                         style={{
                                             backgroundColor: viewMode === 'document' ? '#2e7d32' : '#2d2d2d',
@@ -679,9 +723,7 @@ export default function Home() {
                                     alignItems: 'center',
                                 }}>
                                     <ReactMarkdown>
-                                        {(documents.find(doc => doc.id === currentDocumentId)?.paragraphs
-                                            .map(p => p.current.trim())
-                                            .join('\n\n')) || ''}
+                                        {textManagerRef.current.getFullWorkingText()}
                                     </ReactMarkdown>
                                 </div>
                             ) : (
