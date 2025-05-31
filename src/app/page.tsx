@@ -35,16 +35,15 @@ interface Suggestion {
 
 export default function Home() {
     const textManagerRef = useRef<TextManager>(new TextManager(''));
+    const [rawText, setRawText] = useState(textManagerRef.current.getFullWorkingText());
     const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
     const [selectedSuggestion, setSelectedSuggestion] = useState<number>(-1);
     const [validationErrors, setValidationErrors] = useState<string[]>([]);
     const [copySuccess, setCopySuccess] = useState(false);
     const [pasteSuccess, setPasteSuccess] = useState(false);
     const [templateSuccess, setTemplateSuccess] = useState(false);
-    const leftEditorRef = useRef<any>(null);
-    const containerRef = useRef<HTMLDivElement>(null);
-    const paraRef = useRef<HTMLDivElement>(null);
-    const [fadeLength, setFadeLength] = useState(8);
+    const mainContainerRef = useRef<HTMLDivElement>(null);
+    const selectedParaRef = useRef<HTMLDivElement>(null);
     const [cursorPosition, setCursorPosition] = useState(0);
     const [selectedSegments, setSelectedSegments] = useState<Set<string>>(new Set());
     const [viewMode, setViewMode] = useState<'edit' | 'document'>('edit');
@@ -70,27 +69,28 @@ export default function Home() {
         localStorage.setItem('documents', JSON.stringify(documents));
     }, [documents]);
 
-    const createParagraphsFromText = (text: string): Paragraph[] => {
-        const segments = text.split('\n\n').filter(segment => segment.trim());
-        return segments.map((segment, index) => ({
-            id: `${Date.now()}-${index}`,
-            original: segment.trim(),
-            current: segment.trim(),
-            aiSuggested: `AI suggestion for: "${segment.trim().substring(0, 50)}..."`,
-            isSelected: false
+    const createParagraphsFromSegments = (segments: TextSegment[]): Paragraph[] => {
+        return segments.map(segment => ({
+            id: segment.id,
+            original: segment.original,
+            current: segment.working,
+            aiSuggested: `AI suggestion for: "${segment.original.substring(0, 50)}..."`,
+            isSelected: selectedSegments.has(segment.id)
         }));
     };
 
     const createNewDocument = (content: string, title: string = 'Untitled Document') => {
+        const manager = new TextManager(content);
+        textManagerRef.current = manager;
+        setRawText(manager.getFullWorkingText());
         const newDoc: Document = {
             id: Date.now().toString(),
             title,
-            paragraphs: createParagraphsFromText(content),
+            paragraphs: createParagraphsFromSegments(manager.getSegments()),
             lastModified: new Date()
         };
         setDocuments(prev => [...prev, newDoc]);
         setCurrentDocumentId(newDoc.id);
-        textManagerRef.current = new TextManager(content);
         setCursorPosition(0);
         setSelectedSegments(new Set());
     };
@@ -100,28 +100,21 @@ export default function Home() {
         if (doc) {
             setCurrentDocumentId(docId);
             const content = doc.paragraphs.map(p => p.current).join('\n\n');
-            textManagerRef.current = new TextManager(content);
+            const manager = new TextManager(content);
+            textManagerRef.current = manager;
+            setRawText(manager.getFullWorkingText());
             setCursorPosition(0);
             setSelectedSegments(new Set());
         }
     };
 
+    // Rebuild paragraphs from segments
     const updateCurrentDocument = () => {
         if (currentDocumentId) {
             setDocuments(prev => prev.map(doc => {
                 if (doc.id === currentDocumentId) {
                     const segments = textManagerRef.current.getSegments();
-                    const updatedParagraphs = doc.paragraphs.map((para, index) => {
-                        const segment = segments[index];
-                        if (segment) {
-                            return {
-                                ...para,
-                                current: segment.working,
-                                isSelected: selectedSegments.has(segment.id)
-                            };
-                        }
-                        return para;
-                    });
+                    const updatedParagraphs = createParagraphsFromSegments(segments);
                     return {
                         ...doc,
                         paragraphs: updatedParagraphs,
@@ -138,7 +131,7 @@ export default function Home() {
         if (currentDocumentId) {
             updateCurrentDocument();
         }
-    }, [textManagerRef.current.getFullWorkingText()]);
+    }, [rawText]);
 
     const handleLoadTemplate = () => {
         createNewDocument(template.content, 'Template Document');
@@ -149,36 +142,26 @@ export default function Home() {
     const handlePaste = async () => {
         try {
             let text = '';
-            // Try modern Clipboard API first
             try {
                 text = await navigator.clipboard.readText();
-                console.log('Successfully read from clipboard using modern API');
             } catch (modernError) {
-                console.log('Modern clipboard API failed, trying fallback...');
-                // Fallback: Create a temporary textarea
                 const textarea = document.createElement('textarea');
                 textarea.style.position = 'fixed';
                 textarea.style.opacity = '0';
                 document.body.appendChild(textarea);
                 textarea.focus();
-
-                // Try to paste
                 const success = document.execCommand('paste');
                 if (success) {
                     text = textarea.value;
                 } else {
                     throw new Error('Paste command failed');
                 }
-
-                // Cleanup
                 document.body.removeChild(textarea);
             }
-
             createNewDocument(text, 'Pasted Document');
             setPasteSuccess(true);
             setTimeout(() => setPasteSuccess(false), 2000);
         } catch (err) {
-            console.error('Failed to read from clipboard:', err);
             alert('Failed to read from clipboard. Please try using Ctrl+V (Cmd+V on Mac) to paste directly.');
         }
     };
@@ -186,27 +169,18 @@ export default function Home() {
     const handleCopy = async () => {
         try {
             const textToCopy = textManagerRef.current.getFullWorkingText();
-
-            // Try modern Clipboard API first
             try {
                 await navigator.clipboard.writeText(textToCopy);
-                console.log('Successfully copied using modern API');
                 setCopySuccess(true);
                 setTimeout(() => setCopySuccess(false), 2000);
                 return;
-            } catch (modernError) {
-                console.log('Modern clipboard API failed, trying fallback...');
-            }
-
-            // Fallback: Create a temporary textarea
+            } catch (modernError) { }
             const textarea = document.createElement('textarea');
             textarea.value = textToCopy;
             textarea.style.position = 'fixed';
             textarea.style.opacity = '0';
             document.body.appendChild(textarea);
             textarea.select();
-
-            // Try to copy
             const success = document.execCommand('copy');
             if (success) {
                 setCopySuccess(true);
@@ -214,245 +188,64 @@ export default function Home() {
             } else {
                 throw new Error('Copy command failed');
             }
-
-            // Cleanup
             document.body.removeChild(textarea);
         } catch (err) {
-            console.error('Failed to copy to clipboard:', err);
             alert('Failed to copy to clipboard. Please try using Ctrl+C (Cmd+C on Mac) to copy directly.');
         }
     };
 
     const generateSuggestions = (segments: TextSegment[]) => {
-        console.log('Generating suggestions...');
-        const newSuggestions = segments.map(segment => ({
+        return segments.map(segment => ({
             original: segment.original,
             rewritten: `AI suggestion for: "${segment.original.substring(0, 50)}..."`,
             lineStart: segment.startLine,
             lineEnd: segment.endLine
         }));
-        console.log(`Generated ${newSuggestions.length} suggestions`);
-        return newSuggestions;
     };
 
     // Update suggestions whenever text changes
     useEffect(() => {
-        console.log('Text changed, updating suggestions...');
         const newSuggestions = generateSuggestions(textManagerRef.current.getSegments());
         setSuggestions(newSuggestions);
         setSelectedSuggestion(newSuggestions.length > 0 ? 0 : -1);
-    }, [textManagerRef]);
+    }, [rawText]);
+
+    // Validation effect (debounced)
+    useEffect(() => {
+        const handler = setTimeout(() => {
+            const validateContent = async () => {
+                const result = await validateMarkdown(textManagerRef.current.getFullWorkingText());
+                if (!result.isValid) {
+                    setValidationErrors(result.errors.map(error =>
+                        `${error.message} (line ${error.line}, column ${error.column})`
+                    ));
+                } else {
+                    setValidationErrors([]);
+                }
+            };
+            validateContent();
+        }, 300);
+        return () => clearTimeout(handler);
+    }, [rawText]);
 
     const handleSelection = (segmentId: string, text: string) => {
         textManagerRef.current.updateWorkingCopy(segmentId, text);
+        setRawText(textManagerRef.current.getFullWorkingText());
         setSelectedSegments(prev => new Set(Array.from(prev).concat(segmentId)));
-
-        // Update the current document's paragraphs
-        if (currentDocumentId) {
-            setDocuments(prev => prev.map(doc => {
-                if (doc.id === currentDocumentId) {
-                    const updatedParagraphs = doc.paragraphs.map(para => {
-                        if (para.id === segmentId) {
-                            return {
-                                ...para,
-                                current: text,
-                                isSelected: true
-                            };
-                        }
-                        return para;
-                    });
-                    return {
-                        ...doc,
-                        paragraphs: updatedParagraphs,
-                        lastModified: new Date()
-                    };
-                }
-                return doc;
-            }));
-        }
     };
 
-    const renderSegments = () => {
-        const segmentsWithOpacity = textManagerRef.current.getSegmentsWithOpacity(fadeLength, cursorPosition);
-        const lastIndex = segmentsWithOpacity.length - 1;
-        const segmentElements = segmentsWithOpacity.map(({ segment, opacity }, index) => {
-            const isSelected = index === cursorPosition;
-            const isAccepted = selectedSegments.has(segment.id);
-            const acceptedIndex = isAccepted ? Array.from(selectedSegments).indexOf(segment.id) : -1;
-
-            if (isSelected) {
-                // Generate AI suggestion (reuse your suggestion logic)
-                const aiSuggestion = `AI suggestion for: "${segment.working.substring(0, 50)}..."`;
-                return (
-                    <div
-                        key={segment.id}
-                        ref={paraRef}
-                        style={{
-                            display: 'flex',
-                            flexDirection: 'row',
-                            gap: '2rem',
-                            opacity,
-                            transition: 'all 0.5s ease',
-                            marginBottom: '1rem',
-                            maxWidth: 'calc(68ch * 2 + 2rem)',
-                            position: 'fixed',
-                            top: '50%',
-                            left: '50%',
-                            transform: 'translate(-50%, -50%)',
-                            zIndex: 10,
-                            backgroundColor: '#1e1e1e',
-                            padding: '2rem',
-                            width: '100%',
-                        }}
-                    >
-                        <div
-                            onClick={() => handleSelection(segment.id, segment.original)}
-                            style={{
-                                backgroundColor: 'rgba(45, 45, 45, 0.5)',
-                                padding: '0.5rem',
-                                borderRadius: '4px',
-                                color: '#e0bfae',
-                                fontFamily: 'inherit',
-                                fontSize: 16,
-                                whiteSpace: 'pre-wrap',
-                                maxWidth: '68ch',
-                                flex: 1,
-                                cursor: 'pointer',
-                                transition: 'all 0.2s ease',
-                            }}
-                            onMouseEnter={(e) => {
-                                e.currentTarget.style.backgroundColor = 'rgba(45, 45, 45, 0.7)';
-                            }}
-                            onMouseLeave={(e) => {
-                                e.currentTarget.style.backgroundColor = 'rgba(45, 45, 45, 0.5)';
-                            }}
-                        >
-                            {segment.working}
-                        </div>
-                        <div
-                            onClick={() => handleSelection(segment.id, aiSuggestion)}
-                            style={{
-                                backgroundColor: 'rgba(30, 60, 90, 0.25)',
-                                padding: '0.5rem',
-                                borderRadius: '4px',
-                                color: '#aee0bf',
-                                fontFamily: 'inherit',
-                                fontSize: 16,
-                                whiteSpace: 'pre-wrap',
-                                maxWidth: '68ch',
-                                flex: 1,
-                                borderLeft: '2px solid #3d3d3d',
-                                cursor: 'pointer',
-                                transition: 'all 0.2s ease',
-                            }}
-                            onMouseEnter={(e) => {
-                                e.currentTarget.style.backgroundColor = 'rgba(30, 60, 90, 0.35)';
-                            }}
-                            onMouseLeave={(e) => {
-                                e.currentTarget.style.backgroundColor = 'rgba(30, 60, 90, 0.25)';
-                            }}
-                        >
-                            {aiSuggestion}
-                        </div>
-                    </div>
-                );
-            } else {
-                const baseTransform = isAccepted
-                    ? `translate(-50%, ${-40 - (acceptedIndex * 25)}%)`
-                    : `translate(-50%, ${50 + ((index - cursorPosition) * 100)}%)`;
-
-                return (
-                    <div
-                        key={segment.id}
-                        style={{
-                            opacity: isAccepted ? 1 : opacity,
-                            transition: 'all 0.5s ease',
-                            backgroundColor: isAccepted ? 'rgba(30, 30, 30, 0.5)' : 'transparent',
-                            padding: isAccepted ? '1rem' : '0.5rem',
-                            borderRadius: '4px',
-                            marginBottom: '1rem',
-                            color: '#e0bfae',
-                            fontFamily: 'inherit',
-                            fontSize: 16,
-                            whiteSpace: 'pre-wrap',
-                            maxWidth: '68ch',
-                            transform: baseTransform,
-                            position: 'fixed',
-                            top: '50%',
-                            left: '50%',
-                            width: '100%',
-                            border: isAccepted ? '1px solid rgba(174, 224, 191, 0.3)' : 'none',
-                            zIndex: isAccepted ? 5 : 1,
-                        }}
-                    >
-                        {segment.working}
-                    </div>
-                );
-            }
-        });
-        // Add buttons at the end of edit view if at the last segment
-        if (
-            viewMode === 'edit' &&
-            cursorPosition === lastIndex
-        ) {
-            segmentElements.push(
-                <div key="end-edit-buttons" style={{
-                    display: 'flex',
-                    flexDirection: 'row',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    gap: '1rem',
-                    marginTop: '3rem',
-                    position: 'fixed',
-                    left: '50%',
-                    top: '70%',
-                    transform: 'translate(-50%, 0)',
-                    zIndex: 20,
-                }}>
-                    <Button
-                        variant="soft"
-                        onClick={() => {
-                            setViewMode('document');
-                            forceUpdate(n => n + 1);
-                        }}
-                    >
-                        Go to Document View
-                    </Button>
-                    <Button
-                        variant="soft"
-                        onClick={handleCopy}
-                    >
-                        {copySuccess ? 'Copied!' : 'Copy to Clipboard'}
-                    </Button>
-                </div>
-            );
-        }
-        return segmentElements;
-    };
-
-    // Add effect to scroll selected text into view
-    useEffect(() => {
-        if (paraRef.current) {
-            paraRef.current.scrollIntoView({
-                behavior: 'smooth',
-                block: 'center'
-            });
-        }
-    }, [cursorPosition]);
-
-    // Handle keyboard navigation
+    // Keyboard navigation
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
+            const segments = textManagerRef.current.getSegments();
+            const currentSegment = segments[cursorPosition];
             if (viewMode === 'edit' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
                 e.preventDefault();
-                const currentSegment = textManagerRef.current.getCurrentSegment();
                 if (currentSegment) {
                     const aiSuggestion = `AI suggestion for: "${currentSegment.working.substring(0, 50)}..."`;
                     const newText = e.key === 'ArrowLeft' ? currentSegment.original : aiSuggestion;
                     handleSelection(currentSegment.id, newText);
-
-                    // Move to next paragraph if available
-                    if (cursorPosition < textManagerRef.current.getSegments().length - 1) {
+                    if (cursorPosition < segments.length - 1) {
                         setCursorPosition(prev => prev + 1);
                     }
                 }
@@ -476,52 +269,188 @@ export default function Home() {
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [suggestions, selectedSuggestion, cursorPosition, viewMode]);
 
-    // Add validation effect
+    // Scroll selected paragraph into view
     useEffect(() => {
-        const validateContent = async () => {
-            const result = await validateMarkdown(textManagerRef.current.getFullWorkingText());
-            if (!result.isValid) {
-                setValidationErrors(result.errors.map(error =>
-                    `${error.message} (line ${error.line}, column ${error.column})`
-                ));
-            } else {
-                setValidationErrors([]);
-            }
-        };
-
-        validateContent();
-    }, [textManagerRef]);
-
-    // Calculate fadeLength based on screen height and average paragraph height
-    useEffect(() => {
-        function updateFadeLength() {
-            if (containerRef.current && paraRef.current) {
-                const containerHeight = containerRef.current.offsetHeight;
-                const paraHeight = paraRef.current.offsetHeight;
-                if (paraHeight > 0) {
-                    // Number of visible paragraphs in the container
-                    const visibleParas = Math.floor(containerHeight / paraHeight);
-                    setFadeLength(Math.max(2, visibleParas - 1));
-                }
-            }
+        if (selectedParaRef.current) {
+            selectedParaRef.current.scrollIntoView({
+                behavior: 'smooth',
+                block: 'start',
+            });
         }
-        updateFadeLength();
-        window.addEventListener('resize', updateFadeLength);
-        return () => window.removeEventListener('resize', updateFadeLength);
-    }, []);
+    }, [cursorPosition, rawText]);
 
     const acceptSuggestion = (suggestion: Suggestion) => {
-        console.log('Accepting suggestion...', {
-            lineStart: suggestion.lineStart,
-            lineEnd: suggestion.lineEnd
-        });
-
-        const segment = textManagerRef.current.getSegmentByLineNumber(suggestion.lineStart);
+        const segments = textManagerRef.current.getSegments();
+        const segment = segments.find(seg => seg.startLine === suggestion.lineStart);
         if (segment) {
-            const newTextManager = new TextManager(textManagerRef.current.getFullOriginalText());
-            newTextManager.updateWorkingCopy(segment.id, suggestion.rewritten);
-            textManagerRef.current = newTextManager;
+            textManagerRef.current.updateWorkingCopy(segment.id, suggestion.rewritten);
+            setRawText(textManagerRef.current.getFullWorkingText());
         }
+    };
+
+    const renderSegments = () => {
+        const segments = textManagerRef.current.getSegments();
+        const above = segments.slice(0, cursorPosition);
+        const selected = segments[cursorPosition];
+        const below = segments.slice(cursorPosition + 1);
+        return (
+            <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                width: '100%',
+                maxWidth: '1200px',
+                margin: '0 auto',
+                position: 'relative',
+            }}>
+                {/* Above */}
+                <div style={{ width: '100%' }}>
+                    {above.map((segment, index) => (
+                        <div key={segment.id} style={{
+                            backgroundColor: selectedSegments.has(segment.id) ? 'rgba(30, 30, 30, 0.5)' : 'rgba(45, 45, 45, 0.2)',
+                            padding: '1rem',
+                            borderRadius: '4px',
+                            marginBottom: '1rem',
+                            color: '#e0bfae',
+                            fontFamily: 'inherit',
+                            fontSize: 16,
+                            whiteSpace: 'pre-wrap',
+                            maxWidth: '68ch',
+                            border: selectedSegments.has(segment.id) ? '1px solid rgba(174, 224, 191, 0.3)' : 'none',
+                            width: '100%',
+                            cursor: 'pointer',
+                        }}
+                            onClick={() => handleSelection(segment.id, segment.working)}
+                        >
+                            {segment.working}
+                        </div>
+                    ))}
+                </div>
+                {/* Selected paragraph fixed in the center */}
+                {selected && (
+                    <div
+                        key={selected.id}
+                        ref={selectedParaRef}
+                        style={{
+                            display: 'flex',
+                            flexDirection: 'row',
+                            gap: '2rem',
+                            marginBottom: '1rem',
+                            backgroundColor: '#23272a',
+                            padding: '2rem',
+                            width: '100%',
+                            border: '2px solid #2e7d32',
+                            borderRadius: '8px',
+                            position: 'fixed',
+                            top: '50%',
+                            left: '50%',
+                            transform: 'translate(-50%, -50%)',
+                            zIndex: 100,
+                            maxWidth: 'calc(68ch * 2 + 2rem)',
+                        }}
+                    >
+                        <div
+                            onClick={() => handleSelection(selected.id, selected.original)}
+                            style={{
+                                backgroundColor: 'rgba(45, 45, 45, 0.5)',
+                                padding: '0.5rem',
+                                borderRadius: '4px',
+                                color: '#e0bfae',
+                                fontFamily: 'inherit',
+                                fontSize: 16,
+                                whiteSpace: 'pre-wrap',
+                                maxWidth: '68ch',
+                                flex: 1,
+                                cursor: 'pointer',
+                            }}
+                            onMouseEnter={(e) => {
+                                e.currentTarget.style.backgroundColor = 'rgba(45, 45, 45, 0.7)';
+                            }}
+                            onMouseLeave={(e) => {
+                                e.currentTarget.style.backgroundColor = 'rgba(45, 45, 45, 0.5)';
+                            }}
+                        >
+                            {selected.working}
+                        </div>
+                        <div
+                            onClick={() => handleSelection(selected.id, `AI suggestion for: "${selected.working.substring(0, 50)}..."`)}
+                            style={{
+                                backgroundColor: 'rgba(30, 60, 90, 0.25)',
+                                padding: '0.5rem',
+                                borderRadius: '4px',
+                                color: '#aee0bf',
+                                fontFamily: 'inherit',
+                                fontSize: 16,
+                                whiteSpace: 'pre-wrap',
+                                maxWidth: '68ch',
+                                flex: 1,
+                                borderLeft: '2px solid #3d3d3d',
+                                cursor: 'pointer',
+                            }}
+                            onMouseEnter={(e) => {
+                                e.currentTarget.style.backgroundColor = 'rgba(30, 60, 90, 0.35)';
+                            }}
+                            onMouseLeave={(e) => {
+                                e.currentTarget.style.backgroundColor = 'rgba(30, 60, 90, 0.25)';
+                            }}
+                        >
+                            {`AI suggestion for: "${selected.working.substring(0, 50)}..."`}
+                        </div>
+                    </div>
+                )}
+                {/* Below */}
+                <div style={{ width: '100%', marginTop: 'calc(50vh + 2rem)' }}>
+                    {below.map((segment, index) => (
+                        <div key={segment.id} style={{
+                            backgroundColor: selectedSegments.has(segment.id) ? 'rgba(30, 30, 30, 0.5)' : 'rgba(45, 45, 45, 0.2)',
+                            padding: '1rem',
+                            borderRadius: '4px',
+                            marginBottom: '1rem',
+                            color: '#e0bfae',
+                            fontFamily: 'inherit',
+                            fontSize: 16,
+                            whiteSpace: 'pre-wrap',
+                            maxWidth: '68ch',
+                            border: selectedSegments.has(segment.id) ? '1px solid rgba(174, 224, 191, 0.3)' : 'none',
+                            width: '100%',
+                            cursor: 'pointer',
+                        }}
+                            onClick={() => handleSelection(segment.id, segment.working)}
+                        >
+                            {segment.working}
+                        </div>
+                    ))}
+                </div>
+                {/* End buttons if at the last segment */}
+                {viewMode === 'edit' && cursorPosition === segments.length - 1 && (
+                    <div key="end-edit-buttons" style={{
+                        display: 'flex',
+                        flexDirection: 'row',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        gap: '1rem',
+                        marginTop: '3rem',
+                        zIndex: 200,
+                    }}>
+                        <Button
+                            variant="soft"
+                            onClick={() => {
+                                setViewMode('document');
+                                forceUpdate(n => n + 1);
+                            }}
+                        >
+                            Go to Document View
+                        </Button>
+                        <Button
+                            variant="soft"
+                            onClick={handleCopy}
+                        >
+                            {copySuccess ? 'Copied!' : 'Copy to Clipboard'}
+                        </Button>
+                    </div>
+                )}
+            </div>
+        );
     };
 
     return (
@@ -546,7 +475,7 @@ export default function Home() {
                 copySuccess={copySuccess}
             />
             <div
-                ref={containerRef}
+                ref={mainContainerRef}
                 style={{
                     marginLeft: isSidebarOpen ? 280 : 0,
                     transition: 'margin-left 0.2s cubic-bezier(.4,0,.2,1)',
@@ -600,7 +529,6 @@ export default function Home() {
                                             padding: '0.5rem 1rem',
                                             borderRadius: '4px',
                                             cursor: 'pointer',
-                                            transition: 'all 0.2s ease'
                                         }}
                                     >
                                         ✏️ Edit View
@@ -618,7 +546,6 @@ export default function Home() {
                                             padding: '0.5rem 1rem',
                                             borderRadius: '4px',
                                             cursor: 'pointer',
-                                            transition: 'all 0.2s ease'
                                         }}
                                     >
                                         📄 Document View
@@ -651,7 +578,6 @@ export default function Home() {
                                                     padding: '1rem 2rem',
                                                     borderRadius: '8px',
                                                     cursor: 'pointer',
-                                                    transition: 'all 0.2s ease',
                                                     fontSize: '1.2rem',
                                                     width: '300px'
                                                 }}
@@ -671,7 +597,6 @@ export default function Home() {
                                                     padding: '1rem 2rem',
                                                     borderRadius: '8px',
                                                     cursor: 'pointer',
-                                                    transition: 'all 0.2s ease',
                                                     fontSize: '1.2rem',
                                                     width: '300px'
                                                 }}
@@ -695,7 +620,7 @@ export default function Home() {
                         </Flex>
 
                         <div
-                            ref={containerRef}
+                            ref={mainContainerRef}
                             style={{
                                 flex: 1,
                                 display: 'flex',
