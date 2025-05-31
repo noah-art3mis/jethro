@@ -95,4 +95,19 @@ body {
   to {
     opacity: 1;
   }
+}
+
+.markdown-body p {
+  margin-bottom: 1.25em;
+  max-width: 68ch;
+  word-break: break-word;
+}
+
+.markdown-body h1:first-of-type {
+  font-size: 2.5rem;
+  font-weight: bold;
+  margin-bottom: 1.5rem;
+  color: #fff;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
 } 
