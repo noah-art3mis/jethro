@@ -402,7 +402,7 @@ export default function Home() {
     // Handle keyboard navigation
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+            if (viewMode === 'edit' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
                 e.preventDefault();
                 const currentSegment = textManagerRef.current.getCurrentSegment();
                 if (currentSegment) {
@@ -432,7 +432,7 @@ export default function Home() {
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [suggestions, selectedSuggestion, cursorPosition]);
+    }, [suggestions, selectedSuggestion, cursorPosition, viewMode]);
 
     // Add validation effect
     useEffect(() => {
@@ -490,143 +490,150 @@ export default function Home() {
             display: 'flex',
             justifyContent: 'center',
             alignItems: 'center',
-            overflow: 'hidden'
+            overflow: 'hidden',
+            position: 'relative'
         }}>
-            <Flex direction="row" gap="4" style={{
-                height: 'calc(100vh - 4rem)', // Account for container padding
-                width: '100%',
-                maxWidth: '1200px',
-                margin: '0 auto',
-                backgroundColor: '#1e1e1e',
-                position: 'relative',
-                overflow: 'hidden'
+            {/* Sidebar */}
+            <div style={{
+                width: isSidebarOpen ? '250px' : '40px',
+                backgroundColor: '#2d2d2d',
+                borderRadius: '8px',
+                padding: isSidebarOpen ? '1rem' : '0',
+                transition: 'all 0.3s ease',
+                display: 'flex',
+                flexDirection: 'column',
+                height: 'calc(100vh - 4rem)',
+                position: 'absolute',
+                left: '2rem',
+                top: '2rem',
+                overflow: 'hidden',
+                flexShrink: 0,
+                zIndex: 20
             }}>
-                {/* Sidebar */}
                 <div style={{
-                    width: isSidebarOpen ? '250px' : '0',
-                    backgroundColor: '#2d2d2d',
-                    borderRadius: '8px',
-                    padding: isSidebarOpen ? '1rem' : '0',
-                    transition: 'all 0.3s ease',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    height: '100%',
-                    position: 'relative',
-                    overflow: 'visible'
+                    position: 'absolute',
+                    left: isSidebarOpen ? '1rem' : '0',
+                    top: '1rem',
+                    width: '40px',
+                    zIndex: 10
                 }}>
+                    <SidebarToggle isOpen={isSidebarOpen} onClick={() => setIsSidebarOpen(!isSidebarOpen)} />
+                </div>
+                {isSidebarOpen && (
                     <div style={{
-                        position: 'absolute',
-                        left: isSidebarOpen ? '1rem' : '-40px',
-                        top: '1rem',
-                        width: '40px',
-                        zIndex: 10
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '0.5rem',
+                        overflowY: 'auto',
+                        flex: 1,
+                        minHeight: 0,
+                        marginTop: '3rem',
+                        paddingRight: '0.5rem'
                     }}>
-                        <SidebarToggle isOpen={isSidebarOpen} onClick={() => setIsSidebarOpen(!isSidebarOpen)} />
-                    </div>
-                    {isSidebarOpen && (
-                        <>
-                            <Text size="2" weight="bold" style={{ color: '#a0a0a0', marginTop: '1rem', flexShrink: 0 }}>Documents</Text>
-                            <div style={{
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: '0.5rem',
-                                overflowY: 'auto',
-                                flex: 1,
-                                minHeight: 0,
-                                marginTop: '0.5rem'
-                            }}>
-                                {documents.map(doc => (
+                        <Text size="2" weight="bold" style={{ color: '#a0a0a0', marginBottom: '0.5rem', flexShrink: 0 }}>Documents</Text>
+                        {documents.map(doc => (
+                            <Button
+                                key={doc.id}
+                                onClick={() => loadDocument(doc.id)}
+                                variant="soft"
+                                style={{
+                                    backgroundColor: currentDocumentId === doc.id ? '#2e7d32' : '#3d3d3d',
+                                    color: '#dcddde',
+                                    border: '1px solid #4d4d4d',
+                                    padding: '0.5rem',
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s ease',
+                                    textAlign: 'left',
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    flexShrink: 0,
+                                    height: 'auto'
+                                }}
+                            >
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                    <Text size="2" style={{ fontWeight: 'bold' }}>{doc.title}</Text>
+                                    <Text size="1" style={{ color: '#a0a0a0' }}>
+                                        {doc.lastModified.toLocaleDateString()}
+                                    </Text>
+                                </div>
+                            </Button>
+                        ))}
+                        <div style={{
+                            borderTop: '1px solid #3d3d3d',
+                            paddingTop: '1rem',
+                            marginTop: '1rem',
+                            flexShrink: 0
+                        }}>
+                            <Text size="2" weight="bold" style={{ color: '#a0a0a0', marginBottom: '0.5rem' }}>Analysis</Text>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
+                                <Tooltip content="Check AI-generated content probability using GPTZero">
                                     <Button
-                                        key={doc.id}
-                                        onClick={() => loadDocument(doc.id)}
+                                        onClick={() => {
+                                            // To be implemented with GPTZero integration
+                                            console.log('Analyze AI clicked');
+                                        }}
                                         variant="soft"
                                         style={{
-                                            backgroundColor: currentDocumentId === doc.id ? '#2e7d32' : '#3d3d3d',
+                                            backgroundColor: '#3d3d3d',
                                             color: '#dcddde',
                                             border: '1px solid #4d4d4d',
                                             padding: '0.5rem',
                                             borderRadius: '4px',
                                             cursor: 'pointer',
                                             transition: 'all 0.2s ease',
-                                            textAlign: 'left',
-                                            whiteSpace: 'nowrap',
-                                            overflow: 'hidden',
-                                            textOverflow: 'ellipsis',
-                                            flexShrink: 0
+                                            width: '100%',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.5rem'
                                         }}
                                     >
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                                            <Text size="2" style={{ fontWeight: 'bold' }}>{doc.title}</Text>
-                                            <Text size="1" style={{ color: '#a0a0a0' }}>
-                                                {doc.lastModified.toLocaleDateString()}
-                                            </Text>
-                                        </div>
+                                        🤖 Check AI Probability
                                     </Button>
-                                ))}
+                                </Tooltip>
                             </div>
-                            <div style={{
-                                borderTop: '1px solid #3d3d3d',
-                                paddingTop: '1rem',
-                                marginTop: '1rem',
-                                flexShrink: 0
-                            }}>
-                                <Text size="2" weight="bold" style={{ color: '#a0a0a0', marginBottom: '0.5rem' }}>Analysis</Text>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
-                                    <Tooltip content="Check AI-generated content probability using GPTZero">
-                                        <Button
-                                            onClick={() => {
-                                                // To be implemented with GPTZero integration
-                                                console.log('Analyze AI clicked');
-                                            }}
-                                            variant="soft"
-                                            style={{
-                                                backgroundColor: '#3d3d3d',
-                                                color: '#dcddde',
-                                                border: '1px solid #4d4d4d',
-                                                padding: '0.5rem',
-                                                borderRadius: '4px',
-                                                cursor: 'pointer',
-                                                transition: 'all 0.2s ease',
-                                                width: '100%',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '0.5rem'
-                                            }}
-                                        >
-                                            🤖 Check AI Probability
-                                        </Button>
-                                    </Tooltip>
-                                </div>
 
-                                <Text size="2" weight="bold" style={{ color: '#a0a0a0', marginBottom: '0.5rem' }}>Export</Text>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                    <Tooltip content={copySuccess ? "Copied!" : "Copy text to clipboard"}>
-                                        <Button
-                                            onClick={handleCopy}
-                                            variant="soft"
-                                            style={{
-                                                backgroundColor: copySuccess ? '#2e7d32' : '#3d3d3d',
-                                                color: '#dcddde',
-                                                border: '1px solid #4d4d4d',
-                                                padding: '0.5rem',
-                                                borderRadius: '4px',
-                                                cursor: 'pointer',
-                                                transition: 'all 0.2s ease',
-                                                width: '100%',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '0.5rem'
-                                            }}
-                                        >
-                                            {copySuccess ? '✓ Copied!' : '📋 Copy to Clipboard'}
-                                        </Button>
-                                    </Tooltip>
-                                </div>
+                            <Text size="2" weight="bold" style={{ color: '#a0a0a0', marginBottom: '0.5rem' }}>Export</Text>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                <Tooltip content={copySuccess ? "Copied!" : "Copy text to clipboard"}>
+                                    <Button
+                                        onClick={handleCopy}
+                                        variant="soft"
+                                        style={{
+                                            backgroundColor: copySuccess ? '#2e7d32' : '#3d3d3d',
+                                            color: '#dcddde',
+                                            border: '1px solid #4d4d4d',
+                                            padding: '0.5rem',
+                                            borderRadius: '4px',
+                                            cursor: 'pointer',
+                                            transition: 'all 0.2s ease',
+                                            width: '100%',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '0.5rem'
+                                        }}
+                                    >
+                                        {copySuccess ? '✓ Copied!' : '📋 Copy to Clipboard'}
+                                    </Button>
+                                </Tooltip>
                             </div>
-                        </>
-                    )}
-                </div>
+                        </div>
+                    </div>
+                )}
+            </div>
 
+            <Flex direction="row" gap="4" style={{
+                height: 'calc(100vh - 4rem)', // Account for container padding
+                width: '100%',
+                maxWidth: '1200px',
+                margin: '0 auto',
+                marginLeft: isSidebarOpen ? '270px' : '60px',
+                backgroundColor: '#1e1e1e',
+                position: 'relative',
+                overflow: 'hidden',
+                transition: 'margin-left 0.3s ease'
+            }}>
                 {/* Main Content */}
                 <Flex direction="column" gap="4" style={{
                     flex: 1,
@@ -680,7 +687,7 @@ export default function Home() {
                                     📄 Document View
                                 </Button>
                             </Flex>
-                            {textManagerRef.current.getFullWorkingText().trim() === '' ? (
+                            {viewMode === 'edit' && textManagerRef.current.getFullWorkingText().trim() === '' ? (
                                 <div style={{
                                     position: 'absolute',
                                     top: '50%',
@@ -690,7 +697,11 @@ export default function Home() {
                                     display: 'flex',
                                     flexDirection: 'column',
                                     gap: '1rem',
-                                    alignItems: 'center'
+                                    alignItems: 'center',
+                                    padding: '2rem',
+                                    backgroundColor: 'rgba(30, 30, 30, 0.5)',
+                                    borderRadius: '8px',
+                                    backdropFilter: 'blur(8px)'
                                 }}>
                                     <Tooltip content={templateSuccess ? "Template loaded!" : "Load template content"}>
                                         <Button
