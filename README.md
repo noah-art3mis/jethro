@@ -1,4 +1,4 @@
-# JethroTwin
+# Parallax
 
 A modern text editor with real-time AI suggestions. Write in the left panel while seeing AI-powered rewrites in the right panel. Accept changes with simple keyboard shortcuts.
 

@@ -1,53 +1,11 @@
 'use client';
 
-import { Container, Flex, Text } from '@radix-ui/themes';
+import { Container, Flex, Text, Button, Tooltip } from '@radix-ui/themes';
 import Editor from '@monaco-editor/react';
 import { useState, useRef, useEffect } from 'react';
-
-const DEFAULT_LEFT_TEXT = `# Welcome to JethroTwin! 📝
-
-The authors of an article linking scores on a “wokeness” scale and mental health issues are  blaming political bias for the retraction of their paper in March following post-publication peer review. 
-
-The article, “Do Conservatives Really Have an Advantage in Mental Health? An Examination of Measurement Invariance,” appeared in the Scandinavian Journal of Psychology last August. It has been cited twice, according to Clarivate’s Web of Science, one being the retraction notice. 
-
-“Following publication of this article, concerns were raised by third parties about the conclusions drawn by the authors based on the data provided,” according to the March 26 notice. After investigating, the publisher and the journal “concluded that the article contains major errors involving methods, theory, and normatively biased language,” which “bring into doubt the conclusions drawn by the authors,” the notice stated. The authors disagreed with the decision.
-
-In a blog post, one author, Emil Kirkegaard, called the journal’s action “my first politically motivated retraction.” Kirkegaard’s studies and writings are provocative, on topics including race and IQ.
-
-“I think the journal’s behavior was fairly typical of academia, and not in a good way,” Kirkegaard told us. “Lots of research shows that politically unfavored research is held to higher standards,” he wrote in an email. He added he was “surprised they published our study to begin with.” 
-
-The paper fell to a practice known as post-publication peer review, which can be controversial. The apparent necessity of post-publication peer review for some papers raises questions about how well publishers ensure the quality of the initial peer review process and editorial decision-making, and which papers earn the extra scrutiny.
-
-After receiving concerns, the editors of the Scandinavian Journal of Psychology “sought post-publication peer review to gain other expert opinions as they reevaluated the paper,” said a spokesperson for Wiley, the journal’s publisher. “In this case, both of the new peer reviewers validated the initial concerns surrounding the paper’s methods, theory, and language, and also raised additional questions,” the spokesperson said, leading to the decision to retract the paper. 
-
-Kirkegaard “is perhaps best known for his provocative writing on genetics and race,” Ashley Smart wrote in an article published on Undark the same day as the retraction notice. Among Kirkegaard’s writings, Smart noted, was a blog post asserting “that the hereditarian hypothesis of intelligence — roughly, the idea that races or ancestry groups differ in average intelligence in ways that are substantially attributable to genetics — is ‘almost certainly true.’”
-
-One of Kirkegaard’s recent papers, “Stereotypes of the Intelligence of Nations,” found Americans’ stereotypes about the intelligence of people from different countries “correlated at .78 with measured national IQ s.” 
-
-In a blog post responding to the Undark article, Kirkegaard called it a “hit piece,” but acknowledged, “Smart did his homework.” 
-
-Soon after the Scandinavian Journal of Psychology published Kirkegaard’s study on “wokeness” and mental health, Leonid Schneider contacted the journal’s editor in chief and Wiley, he wrote in a blog post on For Better Science. He noted the retraction in an April post. 
-
-According to emails Kirkegaard published, the retraction followed an investigation in which two reviewers evaluated the article in light of “concerns raised by third parties.” 
-
-The other author of the retracted article, Edward Dutton, told us the post-publication reviewers were “nominated because they were biased to the far left and would give the desired result.” The issues they raised “were extremely minor and almost inconsequential cavils such as the difference between ‘left-wing’ and ‘woke’ or between ‘religious’ and ‘spiritual,’” he said. 
-
-One of the reviewers “accused us of citing white supremacist literature, when we did no such thing,” Dutton said. “They were simply making up issues to complain about.” 
-
-A Wiley spokesperson did not directly answer our question about the role a paper’s topic or public pressure play in commissioning post-publication peer review. The publisher does not track how often such reviews are commissioned, the spokesperson said. 
-
-The decision to use post-publication peer review “is very case-dependent,” the spokesperson said. The process “can be particularly relevant” when an editor needs “a more specialized subject matter expert” to re-evaluate a paper due to its topic, the spokesperson said, or “when there are concerns about the completeness of the initial peer review, and we need another expert opinion to know whether the paper can stand.” 
-
-The post-publication review did identify a coding problem, which Kirkegaard said “should have been found earlier.” He fixed it, plus another “more important” problem he found upon looking at the dataset again, he said, but “the results didn’t change much.”
-
-“I think these kinds of errors are fairly common in science coding,” Kirkegaard said. “As you probably know, peer review is generally superficial and even if the code and data is provided, reviewers do not generally download the code and data and run things themselves. This is only done when there is some motivating factor. In this case, political hostility, but in other cases it may be fraud concerns.”
-
-The editors and Wiley invited the authors to revise and resubmit the paper for reconsideration, but Kirkegaard and Dutton said they do not plan to do so. 
-
-“The paper has been published,” Dutton said, “and any reasonable academic will see that it’s been retracted for political reasons and will cite it even though it’s been retracted.” 
-
-Like Retraction Watch? You can make a tax-deductible contribution to support our work, follow us on X or Bluesky, like us on Facebook, follow us on LinkedIn, add us to your RSS reader, or subscribe to our daily digest. If you find a retraction that’s not in our database, you can let us know here. For comments or feedback, email us at team@retractionwatch.com.
-`;
+import template from './template.json';
+import { validateMarkdown, formatValidationErrors } from '../utils/markdownValidator';
+import { TextManager, TextSegment } from '../utils/textManager';
 
 interface Suggestion {
     original: string;
@@ -57,123 +15,384 @@ interface Suggestion {
 }
 
 export default function Home() {
-    const [originalText, setOriginalText] = useState(DEFAULT_LEFT_TEXT);
+    const textManagerRef = useRef<TextManager>(new TextManager(''));
     const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
     const [selectedSuggestion, setSelectedSuggestion] = useState<number>(-1);
+    const [validationErrors, setValidationErrors] = useState<string[]>([]);
+    const [copySuccess, setCopySuccess] = useState(false);
+    const [pasteSuccess, setPasteSuccess] = useState(false);
+    const [templateSuccess, setTemplateSuccess] = useState(false);
     const leftEditorRef = useRef<any>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
+    const paraRef = useRef<HTMLDivElement>(null);
+    const [fadeLength, setFadeLength] = useState(8);
+    const [cursorPosition, setCursorPosition] = useState(0);
 
-    const splitIntoParagraphs = (text: string): string[] => {
-        return text.split(/\n\s*\n/).filter(para => para.trim() !== '');
+    const handleLoadTemplate = () => {
+        textManagerRef.current = new TextManager(template.content);
+        setTemplateSuccess(true);
+        setTimeout(() => setTemplateSuccess(false), 2000);
     };
 
-    const generateSuggestions = (text: string) => {
-        const paragraphs = splitIntoParagraphs(text);
-        let lineCount = 1;
-        return paragraphs.map(para => {
-            const paraLineCount = para.split('\n').length;
-            const suggestion: Suggestion = {
-                original: para,
-                // TODO: Replace with actual AI call
-                rewritten: `AI suggestion for: "${para.substring(0, 50)}..."`,
-                lineStart: lineCount,
-                lineEnd: lineCount + paraLineCount - 1
-            };
-            lineCount += paraLineCount + 1; // +1 for the blank line between paragraphs
-            return suggestion;
-        });
+    const handlePaste = async () => {
+        try {
+            // Try modern Clipboard API first
+            try {
+                const text = await navigator.clipboard.readText();
+                console.log('Successfully read from clipboard using modern API');
+                textManagerRef.current = new TextManager(text);
+                setPasteSuccess(true);
+                setTimeout(() => setPasteSuccess(false), 2000);
+                return;
+            } catch (modernError) {
+                console.log('Modern clipboard API failed, trying fallback...');
+            }
+
+            // Fallback: Create a temporary textarea
+            const textarea = document.createElement('textarea');
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.focus();
+
+            // Try to paste
+            const success = document.execCommand('paste');
+            if (success) {
+                const text = textarea.value;
+                textManagerRef.current = new TextManager(text);
+                setPasteSuccess(true);
+                setTimeout(() => setPasteSuccess(false), 2000);
+            } else {
+                throw new Error('Paste command failed');
+            }
+
+            // Cleanup
+            document.body.removeChild(textarea);
+        } catch (err) {
+            console.error('Failed to read from clipboard:', err);
+            alert('Failed to read from clipboard. Please try using Ctrl+V (Cmd+V on Mac) to paste directly.');
+        }
+    };
+
+    const handleCopy = async () => {
+        try {
+            const textToCopy = textManagerRef.current.getFullWorkingText();
+
+            // Try modern Clipboard API first
+            try {
+                await navigator.clipboard.writeText(textToCopy);
+                console.log('Successfully copied using modern API');
+                setCopySuccess(true);
+                setTimeout(() => setCopySuccess(false), 2000);
+                return;
+            } catch (modernError) {
+                console.log('Modern clipboard API failed, trying fallback...');
+            }
+
+            // Fallback: Create a temporary textarea
+            const textarea = document.createElement('textarea');
+            textarea.value = textToCopy;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+
+            // Try to copy
+            const success = document.execCommand('copy');
+            if (success) {
+                setCopySuccess(true);
+                setTimeout(() => setCopySuccess(false), 2000);
+            } else {
+                throw new Error('Copy command failed');
+            }
+
+            // Cleanup
+            document.body.removeChild(textarea);
+        } catch (err) {
+            console.error('Failed to copy to clipboard:', err);
+            alert('Failed to copy to clipboard. Please try using Ctrl+C (Cmd+C on Mac) to copy directly.');
+        }
+    };
+
+    const generateSuggestions = (segments: TextSegment[]) => {
+        console.log('Generating suggestions...');
+        const newSuggestions = segments.map(segment => ({
+            original: segment.original,
+            rewritten: `AI suggestion for: "${segment.original.substring(0, 50)}..."`,
+            lineStart: segment.startLine,
+            lineEnd: segment.endLine
+        }));
+        console.log(`Generated ${newSuggestions.length} suggestions`);
+        return newSuggestions;
     };
 
     // Update suggestions whenever text changes
     useEffect(() => {
-        const newSuggestions = generateSuggestions(originalText);
+        console.log('Text changed, updating suggestions...');
+        const newSuggestions = generateSuggestions(textManagerRef.current.getSegments());
         setSuggestions(newSuggestions);
         setSelectedSuggestion(newSuggestions.length > 0 ? 0 : -1);
-    }, [originalText]);
+    }, [textManagerRef]);
 
     // Handle keyboard navigation
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            if (suggestions.length === 0) return;
-
-            if (e.key === 'Tab') {
+            if (e.key === 'ArrowDown') {
                 e.preventDefault();
-                setSelectedSuggestion(prev =>
-                    prev < suggestions.length - 1 ? prev + 1 : 0
-                );
+                if (textManagerRef.current.moveCursorDown()) {
+                    setCursorPosition(textManagerRef.current.getCursorPosition());
+                }
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                if (textManagerRef.current.moveCursorUp()) {
+                    setCursorPosition(textManagerRef.current.getCursorPosition());
+                }
+            } else if (e.key === 'Tab' && suggestions.length > 0) {
+                e.preventDefault();
+                setSelectedSuggestion(prev => {
+                    const next = prev < suggestions.length - 1 ? prev + 1 : 0;
+                    return next;
+                });
             } else if (e.key === 'Enter' && selectedSuggestion !== -1) {
                 e.preventDefault();
                 acceptSuggestion(suggestions[selectedSuggestion]);
             }
         };
-
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [suggestions, selectedSuggestion]);
 
     const acceptSuggestion = (suggestion: Suggestion) => {
-        if (!leftEditorRef.current) return;
+        console.log('Accepting suggestion...', {
+            lineStart: suggestion.lineStart,
+            lineEnd: suggestion.lineEnd
+        });
 
-        const editor = leftEditorRef.current;
-        const model = editor.getModel();
-        if (!model) return;
+        const segment = textManagerRef.current.getSegmentByLineNumber(suggestion.lineStart);
+        if (segment) {
+            const newTextManager = new TextManager(textManagerRef.current.getFullOriginalText());
+            newTextManager.updateWorkingCopy(segment.id, suggestion.rewritten);
+            textManagerRef.current = newTextManager;
+        }
+    };
 
-        editor.executeEdits('accept-suggestion', [{
-            range: {
-                startLineNumber: suggestion.lineStart,
-                startColumn: 1,
-                endLineNumber: suggestion.lineEnd,
-                endColumn: model.getLineMaxColumn(suggestion.lineEnd)
-            },
-            text: suggestion.rewritten
-        }]);
+    // Add validation effect
+    useEffect(() => {
+        const validateContent = async () => {
+            const result = await validateMarkdown(textManagerRef.current.getFullWorkingText());
+            if (!result.isValid) {
+                setValidationErrors(result.errors.map(error =>
+                    `${error.message} (line ${error.line}, column ${error.column})`
+                ));
+            } else {
+                setValidationErrors([]);
+            }
+        };
+
+        validateContent();
+    }, [textManagerRef]);
+
+    // Calculate fadeLength based on screen height and average paragraph height
+    useEffect(() => {
+        function updateFadeLength() {
+            if (containerRef.current && paraRef.current) {
+                const containerHeight = containerRef.current.offsetHeight;
+                const paraHeight = paraRef.current.offsetHeight;
+                if (paraHeight > 0) {
+                    // Number of visible paragraphs in the container
+                    const visibleParas = Math.floor(containerHeight / paraHeight);
+                    setFadeLength(Math.max(2, visibleParas - 1));
+                }
+            }
+        }
+        updateFadeLength();
+        window.addEventListener('resize', updateFadeLength);
+        return () => window.removeEventListener('resize', updateFadeLength);
+    }, []);
+
+    const renderSegments = () => {
+        const segmentsWithOpacity = textManagerRef.current.getSegmentsWithOpacity(fadeLength, cursorPosition);
+        return segmentsWithOpacity.map(({ segment, opacity }, index) => {
+            const isSelected = index === cursorPosition;
+            if (isSelected) {
+                // Generate AI suggestion (reuse your suggestion logic)
+                const aiSuggestion = `AI suggestion for: "${segment.working.substring(0, 50)}..."`;
+                return (
+                    <div
+                        key={segment.id}
+                        ref={paraRef}
+                        style={{
+                            display: 'flex',
+                            flexDirection: 'row',
+                            gap: '2rem',
+                            opacity,
+                            transition: 'opacity 0.3s ease',
+                            marginBottom: '1rem',
+                            maxWidth: 'calc(68ch * 2 + 2rem)',
+                        }}
+                    >
+                        <div
+                            style={{
+                                backgroundColor: 'rgba(45, 45, 45, 0.5)',
+                                padding: '0.5rem',
+                                borderRadius: '4px',
+                                color: '#e0bfae',
+                                fontFamily: 'inherit',
+                                fontSize: 16,
+                                whiteSpace: 'pre-wrap',
+                                maxWidth: '68ch',
+                                flex: 1,
+                            }}
+                        >
+                            {segment.working}
+                        </div>
+                        <div
+                            style={{
+                                backgroundColor: 'rgba(30, 60, 90, 0.25)',
+                                padding: '0.5rem',
+                                borderRadius: '4px',
+                                color: '#aee0bf',
+                                fontFamily: 'inherit',
+                                fontSize: 16,
+                                whiteSpace: 'pre-wrap',
+                                maxWidth: '68ch',
+                                flex: 1,
+                                borderLeft: '2px solid #3d3d3d',
+                            }}
+                        >
+                            {aiSuggestion}
+                        </div>
+                    </div>
+                );
+            } else {
+                return (
+                    <div
+                        key={segment.id}
+                        style={{
+                            opacity,
+                            transition: 'opacity 0.3s ease',
+                            backgroundColor: 'transparent',
+                            padding: '0.5rem',
+                            borderRadius: '4px',
+                            marginBottom: '1rem',
+                            color: '#e0bfae',
+                            fontFamily: 'inherit',
+                            fontSize: 16,
+                            whiteSpace: 'pre-wrap',
+                            maxWidth: '68ch',
+                        }}
+                    >
+                        {segment.working}
+                    </div>
+                );
+            }
+        });
     };
 
     return (
-        <Container size="4">
-            <Flex direction="column" gap="4" style={{ height: '100vh', padding: '1rem' }}>
-                <Text size="5" weight="bold">JethroTwin</Text>
+        <Container size="4" style={{
+            backgroundColor: '#1e1e1e',
+            minHeight: '100vh',
+            padding: '2rem',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center'
+        }}>
+            <Flex direction="column" gap="4" style={{
+                height: '100vh',
+                maxWidth: '800px',
+                width: '100%',
+                margin: '0 auto',
+                backgroundColor: '#1e1e1e'
+            }}>
+                <Flex justify="between" align="center" style={{ marginBottom: '1rem' }}>
+                    <Text size="6" weight="bold" style={{
+                        color: '#ffffff',
+                        letterSpacing: '-0.02em',
+                        background: 'linear-gradient(135deg, #ffffff 0%, #a0a0a0 100%)',
+                        WebkitBackgroundClip: 'text',
+                        WebkitTextFillColor: 'transparent',
+                        textShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                    }}>Parallax</Text>
+                    <Flex gap="2" align="center">
+                        {validationErrors.length > 0 && (
+                            <Tooltip content={validationErrors.join('\n')}>
+                                <Text size="2" style={{ color: '#ff6b6b' }}>
+                                    ⚠️ {validationErrors.length} validation {validationErrors.length === 1 ? 'error' : 'errors'}
+                                </Text>
+                            </Tooltip>
+                        )}
+                        <Tooltip content={templateSuccess ? "Template loaded!" : "Load template content"}>
+                            <Button
+                                onClick={handleLoadTemplate}
+                                variant="soft"
+                                style={{
+                                    backgroundColor: templateSuccess ? '#2e7d32' : '#2d2d2d',
+                                    color: '#dcddde',
+                                    border: '1px solid #3d3d3d',
+                                    padding: '0.5rem 1rem',
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s ease'
+                                }}
+                            >
+                                {templateSuccess ? '✓ Template Loaded!' : '📝 Load Template'}
+                            </Button>
+                        </Tooltip>
+                        <Tooltip content={pasteSuccess ? "Pasted!" : "Paste text from your clipboard (Ctrl+V)"}>
+                            <Button
+                                onClick={handlePaste}
+                                variant="soft"
+                                style={{
+                                    backgroundColor: pasteSuccess ? '#2e7d32' : '#2d2d2d',
+                                    color: '#dcddde',
+                                    border: '1px solid #3d3d3d',
+                                    padding: '0.5rem 1rem',
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s ease'
+                                }}
+                            >
+                                {pasteSuccess ? '✓ Pasted!' : '📋 Paste from Clipboard'}
+                            </Button>
+                        </Tooltip>
+                        <Tooltip content={copySuccess ? "Copied!" : "Copy text to clipboard"}>
+                            <Button
+                                onClick={handleCopy}
+                                variant="soft"
+                                style={{
+                                    backgroundColor: copySuccess ? '#2e7d32' : '#2d2d2d',
+                                    color: '#dcddde',
+                                    border: '1px solid #3d3d3d',
+                                    padding: '0.5rem 1rem',
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s ease'
+                                }}
+                            >
+                                {copySuccess ? '✓ Copied!' : '📋 Copy to Clipboard'}
+                            </Button>
+                        </Tooltip>
+                    </Flex>
+                </Flex>
 
-                <div className="editor-container">
-                    <div>
-                        <Editor
-                            height="100%"
-                            defaultLanguage="markdown"
-                            theme="vs-dark"
-                            value={originalText}
-                            onChange={(value) => setOriginalText(value || '')}
-                            onMount={(editor) => leftEditorRef.current = editor}
-                            options={{
-                                minimap: { enabled: false },
-                                fontSize: 14,
-                                wordWrap: 'on',
-                                lineNumbers: 'on',
-                                renderWhitespace: 'boundary',
-                            }}
-                        />
-                    </div>
-
-                    <div className="suggestions-panel">
-                        <Flex direction="column" gap="3">
-                            {suggestions.map((suggestion, index) => (
-                                <div
-                                    key={index}
-                                    className={`suggestion-container ${index === selectedSuggestion ? 'selected' : ''}`}
-                                >
-                                    <Text size="2" color="gray">
-                                        Paragraph {index + 1} (Lines {suggestion.lineStart}-{suggestion.lineEnd}):
-                                    </Text>
-                                    <div className="original-text">
-                                        {suggestion.original}
-                                    </div>
-                                    <Text size="2" color="gray">Suggestion:</Text>
-                                    <div className="suggestion-text">
-                                        {suggestion.rewritten}
-                                    </div>
-                                    {index < suggestions.length - 1 && <hr className="separator" />}
-                                </div>
-                            ))}
-                        </Flex>
-                    </div>
+                <div
+                    ref={containerRef}
+                    style={{
+                        flex: 1,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'flex-start',
+                        width: '100%',
+                        backgroundColor: '#1e1e1e',
+                        borderRadius: '8px',
+                        overflow: 'auto',
+                        boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+                        position: 'relative',
+                        padding: '1rem 0',
+                    }}
+                >
+                    {renderSegments()}
                 </div>
             </Flex>
         </Container>

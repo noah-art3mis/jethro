@@ -4,7 +4,7 @@ import './globals.css';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-    title: 'JethroTwin - AI-Powered Text Editor',
+    title: 'Parallax - AI-Powered Text Editor',
     description: 'A modern text editor with LLM integration and parallel comparison view',
 };
 
