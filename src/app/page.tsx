@@ -1,31 +1,22 @@
 'use client';
 
-import { Container, Flex, Text, Button, Tooltip } from '@radix-ui/themes';
-import Editor from '@monaco-editor/react';
-import { useState, useRef, useEffect } from 'react';
+import { Container, Flex } from '@radix-ui/themes'; // Text, Button, Tooltip are not directly used
+// Editor not used
+import { useState, useRef, useEffect, useCallback } from 'react';
 import template from './template.json';
-import { validateMarkdown, formatValidationErrors } from '../utils/markdownValidator';
+import { validateMarkdown } from '../utils/markdownValidator'; // formatValidationErrors removed
 import { TextManager, TextSegment } from '../utils/textManager';
-import Link from 'next/link';
-import { SidebarToggle } from '../components/SidebarToggle';
-import ReactMarkdown from 'react-markdown';
+// SidebarToggle not used
+
 import { Sidebar } from './Sidebar';
+import Header from './components/main/Header';
+import EditView from './components/main/EditView';
+import DocumentView from './components/main/DocumentView';
+import { useLocalStorageDocuments, Document, Paragraph } from '../hooks/useLocalStorageDocuments';
+import { useClipboard } from '../hooks/useClipboard';
+import { useKeyboardNavigation } from '../hooks/useKeyboardNavigation'; // HookSuggestion removed
 
-interface Paragraph {
-    id: string;
-    original: string;
-    current: string;
-    aiSuggested: string;
-    isSelected: boolean;
-}
-
-interface Document {
-    id: string;
-    title: string;
-    paragraphs: Paragraph[];
-    lastModified: Date;
-}
-
+// Suggestion interface is used for suggestions state and acceptSuggestion function
 interface Suggestion {
     original: string;
     rewritten: string;
@@ -34,42 +25,55 @@ interface Suggestion {
 }
 
 export default function Home() {
+    // Document Management State
+    const [documents, setDocuments] = useLocalStorageDocuments(); // Use the custom hook
+    const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(null);
+
+    // Editor Content State
     const textManagerRef = useRef<TextManager>(new TextManager(''));
     const [rawText, setRawText] = useState(textManagerRef.current.getFullWorkingText());
+    const [selectedSegments, setSelectedSegments] = useState<Set<string>>(new Set());
+
+    // Suggestions State
     const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
     const [selectedSuggestion, setSelectedSuggestion] = useState<number>(-1);
-    const [validationErrors, setValidationErrors] = useState<string[]>([]);
-    const [copySuccess, setCopySuccess] = useState(false);
-    const [pasteSuccess, setPasteSuccess] = useState(false);
+
+    // UI/View State
+    const [viewMode, setViewMode] = useState<'edit' | 'document'>('edit');
+    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    const [cursorPosition, setCursorPosition] = useState(0);
+
+    // Temporary Feedback State (template part remains, clipboard part moves to hook)
     const [templateSuccess, setTemplateSuccess] = useState(false);
+
+    // Validation State
+    const [validationErrors, setValidationErrors] = useState<string[]>([]);
+
+    // Refs for DOM elements
     const mainContainerRef = useRef<HTMLDivElement>(null);
     const selectedParaRef = useRef<HTMLDivElement>(null);
-    const [cursorPosition, setCursorPosition] = useState(0);
-    const [selectedSegments, setSelectedSegments] = useState<Set<string>>(new Set());
-    const [viewMode, setViewMode] = useState<'edit' | 'document'>('edit');
-    const [documents, setDocuments] = useState<Document[]>([]);
-    const [currentDocumentId, setCurrentDocumentId] = useState<string | null>(null);
-    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+    // Utility State (Force Update)
     const [, forceUpdate] = useState(0);
 
-    // Load documents from localStorage on mount
-    useEffect(() => {
-        const savedDocuments = localStorage.getItem('documents');
-        if (savedDocuments) {
-            const parsedDocs = JSON.parse(savedDocuments).map((doc: any) => ({
-                ...doc,
-                lastModified: new Date(doc.lastModified)
-            }));
-            setDocuments(parsedDocs);
-        }
-    }, []);
+    // Clipboard Hook
+    const { copyText, pasteText, copySuccess, pasteSuccess } = useClipboard({ createNewDocument });
 
-    // Save documents to localStorage whenever they change
-    useEffect(() => {
-        localStorage.setItem('documents', JSON.stringify(documents));
-    }, [documents]);
+    // Keyboard Navigation Hook
+    useKeyboardNavigation({
+        isActive: viewMode === 'edit',
+        suggestions,
+        selectedSuggestion,
+        setSelectedSuggestion,
+        acceptSuggestion, // This function's stability depends on its own dependencies
+        cursorPosition,
+        setCursorPosition,
+        segments: textManagerRef.current.getSegments(), // This will be stale if not re-evaluated; consider passing textManagerRef.current
+        onSegmentSelect: handleSelection, // This function's stability
+    });
 
-    const createParagraphsFromSegments = (segments: TextSegment[]): Paragraph[] => {
+    // Helper function for creating paragraph objects, used in createNewDocument and updateCurrentDocument
+    const createParagraphsFromSegments = useCallback((segments: TextSegment[]): Paragraph[] => {
         return segments.map(segment => ({
             id: segment.id,
             original: segment.original,
@@ -106,32 +110,28 @@ export default function Home() {
             setCursorPosition(0);
             setSelectedSegments(new Set());
         }
-    };
+    }, [selectedSegments]); // Depends on selectedSegments for the isSelected property
 
-    // Rebuild paragraphs from segments
-    const updateCurrentDocument = () => {
+    // Rebuild paragraphs in the current document
+    const updateCurrentDocument = useCallback(() => {
         if (currentDocumentId) {
-            setDocuments(prev => prev.map(doc => {
+            setDocuments(prevDocs => prevDocs.map(doc => {
                 if (doc.id === currentDocumentId) {
                     const segments = textManagerRef.current.getSegments();
                     const updatedParagraphs = createParagraphsFromSegments(segments);
-                    return {
-                        ...doc,
-                        paragraphs: updatedParagraphs,
-                        lastModified: new Date()
-                    };
+                    return { ...doc, paragraphs: updatedParagraphs, lastModified: new Date() };
                 }
                 return doc;
             }));
         }
-    };
+    }, [currentDocumentId, setDocuments, createParagraphsFromSegments, textManagerRef]);
 
-    // Update document content when text changes
+    // Effect to update document content when rawText changes
     useEffect(() => {
         if (currentDocumentId) {
             updateCurrentDocument();
         }
-    }, [rawText]);
+    }, [rawText, currentDocumentId, updateCurrentDocument]); // Added currentDocumentId and updateCurrentDocument
 
     const handleLoadTemplate = () => {
         createNewDocument(template.content, 'Template Document');
@@ -139,318 +139,65 @@ export default function Home() {
         setTimeout(() => setTemplateSuccess(false), 2000);
     };
 
-    const handlePaste = async () => {
-        try {
-            let text = '';
-            try {
-                text = await navigator.clipboard.readText();
-            } catch (modernError) {
-                const textarea = document.createElement('textarea');
-                textarea.style.position = 'fixed';
-                textarea.style.opacity = '0';
-                document.body.appendChild(textarea);
-                textarea.focus();
-                const success = document.execCommand('paste');
-                if (success) {
-                    text = textarea.value;
-                } else {
-                    throw new Error('Paste command failed');
-                }
-                document.body.removeChild(textarea);
-            }
-            createNewDocument(text, 'Pasted Document');
-            setPasteSuccess(true);
-            setTimeout(() => setPasteSuccess(false), 2000);
-        } catch (err) {
-            alert('Failed to read from clipboard. Please try using Ctrl+V (Cmd+V on Mac) to paste directly.');
-        }
-    };
-
-    const handleCopy = async () => {
-        try {
-            const textToCopy = textManagerRef.current.getFullWorkingText();
-            try {
-                await navigator.clipboard.writeText(textToCopy);
-                setCopySuccess(true);
-                setTimeout(() => setCopySuccess(false), 2000);
-                return;
-            } catch (modernError) { }
-            const textarea = document.createElement('textarea');
-            textarea.value = textToCopy;
-            textarea.style.position = 'fixed';
-            textarea.style.opacity = '0';
-            document.body.appendChild(textarea);
-            textarea.select();
-            const success = document.execCommand('copy');
-            if (success) {
-                setCopySuccess(true);
-                setTimeout(() => setCopySuccess(false), 2000);
-            } else {
-                throw new Error('Copy command failed');
-            }
-            document.body.removeChild(textarea);
-        } catch (err) {
-            alert('Failed to copy to clipboard. Please try using Ctrl+C (Cmd+C on Mac) to copy directly.');
-        }
-    };
-
-    const generateSuggestions = (segments: TextSegment[]) => {
+    const generateSuggestions = useCallback((segments: TextSegment[]): Suggestion[] => {
         return segments.map(segment => ({
             original: segment.original,
-            rewritten: `AI suggestion for: "${segment.original.substring(0, 50)}..."`,
+            rewritten: `AI suggestion for: "${segment.original.substring(0, 50)}..."`, // This is placeholder AI suggestion
             lineStart: segment.startLine,
             lineEnd: segment.endLine
         }));
-    };
+    }, []);
 
-    // Update suggestions whenever text changes
+    // Effect to update suggestions when rawText changes
     useEffect(() => {
         const newSuggestions = generateSuggestions(textManagerRef.current.getSegments());
         setSuggestions(newSuggestions);
         setSelectedSuggestion(newSuggestions.length > 0 ? 0 : -1);
-    }, [rawText]);
+    }, [rawText, generateSuggestions, textManagerRef]); // Added generateSuggestions and textManagerRef
 
-    // Validation effect (debounced)
+    // Effect for markdown validation (debounced)
     useEffect(() => {
-        const handler = setTimeout(() => {
-            const validateContent = async () => {
-                const result = await validateMarkdown(textManagerRef.current.getFullWorkingText());
-                if (!result.isValid) {
-                    setValidationErrors(result.errors.map(error =>
-                        `${error.message} (line ${error.line}, column ${error.column})`
-                    ));
-                } else {
-                    setValidationErrors([]);
-                }
-            };
-            validateContent();
-        }, 300);
-        return () => clearTimeout(handler);
-    }, [rawText]);
-
-    const handleSelection = (segmentId: string, text: string) => {
-        textManagerRef.current.updateWorkingCopy(segmentId, text);
-        setRawText(textManagerRef.current.getFullWorkingText());
-        setSelectedSegments(prev => new Set(Array.from(prev).concat(segmentId)));
-    };
-
-    // Keyboard navigation
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            const segments = textManagerRef.current.getSegments();
-            const currentSegment = segments[cursorPosition];
-            if (viewMode === 'edit' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-                e.preventDefault();
-                if (currentSegment) {
-                    const aiSuggestion = `AI suggestion for: "${currentSegment.working.substring(0, 50)}..."`;
-                    const newText = e.key === 'ArrowLeft' ? currentSegment.original : aiSuggestion;
-                    handleSelection(currentSegment.id, newText);
-                    if (cursorPosition < segments.length - 1) {
-                        setCursorPosition(prev => prev + 1);
-                    }
-                }
-            } else if (e.key === 'Tab' && suggestions.length > 0) {
-                e.preventDefault();
-                setSelectedSuggestion(prev => {
-                    const next = prev < suggestions.length - 1 ? prev + 1 : 0;
-                    return next;
-                });
-            } else if (e.key === 'Enter' && selectedSuggestion !== -1) {
-                e.preventDefault();
-                acceptSuggestion(suggestions[selectedSuggestion]);
-            } else if (viewMode === 'edit' && e.key === 'ArrowUp') {
-                e.preventDefault();
-                if (cursorPosition > 0) {
-                    setCursorPosition(prev => prev - 1);
-                }
+        const validate = async () => {
+            const result = await validateMarkdown(textManagerRef.current.getFullWorkingText());
+            if (!result.isValid) {
+                setValidationErrors(result.errors.map(error =>
+                    `${error.message} (line ${error.line}, column ${error.column})`
+                ));
+            } else {
+                setValidationErrors([]);
             }
         };
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [suggestions, selectedSuggestion, cursorPosition, viewMode]);
+        const handler = setTimeout(validate, 300);
+        return () => clearTimeout(handler);
+    }, [rawText, textManagerRef]); // Added textManagerRef
 
-    // Scroll selected paragraph into view
+    // Function to handle segment selection/update
+    const handleSelection = useCallback((segmentId: string, text: string) => {
+        textManagerRef.current.updateWorkingCopy(segmentId, text);
+        setRawText(textManagerRef.current.getFullWorkingText()); // Triggers other effects based on rawText
+        setSelectedSegments(prev => new Set(Array.from(prev).concat(segmentId)));
+    }, [textManagerRef, setRawText, setSelectedSegments]);
+
+    // Effect to scroll the selected paragraph into view
     useEffect(() => {
         if (selectedParaRef.current) {
-            selectedParaRef.current.scrollIntoView({
-                behavior: 'smooth',
-                block: 'start',
-            });
+            selectedParaRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
-    }, [cursorPosition, rawText]);
+    }, [cursorPosition, rawText]); // rawText might affect layout, so it's a reasonable dependency
 
-    const acceptSuggestion = (suggestion: Suggestion) => {
+    // Function to accept an AI suggestion
+    const acceptSuggestion = useCallback((suggestion: Suggestion) => {
         const segments = textManagerRef.current.getSegments();
         const segment = segments.find(seg => seg.startLine === suggestion.lineStart);
         if (segment) {
             textManagerRef.current.updateWorkingCopy(segment.id, suggestion.rewritten);
-            setRawText(textManagerRef.current.getFullWorkingText());
+            setRawText(textManagerRef.current.getFullWorkingText()); // Triggers other effects
         }
-    };
+    }, [textManagerRef, setRawText]);
 
-    const renderSegments = () => {
-        const segments = textManagerRef.current.getSegments();
-        const above = segments.slice(0, cursorPosition);
-        const selected = segments[cursorPosition];
-        const below = segments.slice(cursorPosition + 1);
-        return (
-            <div style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                width: '100%',
-                maxWidth: '1200px',
-                margin: '0 auto',
-                position: 'relative',
-            }}>
-                {/* Above */}
-                <div style={{ width: '100%' }}>
-                    {above.map((segment, index) => (
-                        <div key={segment.id} style={{
-                            backgroundColor: selectedSegments.has(segment.id) ? 'rgba(30, 30, 30, 0.5)' : 'rgba(45, 45, 45, 0.2)',
-                            padding: '1rem',
-                            borderRadius: '4px',
-                            marginBottom: '1rem',
-                            color: '#e0bfae',
-                            fontFamily: 'inherit',
-                            fontSize: 16,
-                            whiteSpace: 'pre-wrap',
-                            maxWidth: '68ch',
-                            border: selectedSegments.has(segment.id) ? '1px solid rgba(174, 224, 191, 0.3)' : 'none',
-                            width: '100%',
-                            cursor: 'pointer',
-                        }}
-                            onClick={() => handleSelection(segment.id, segment.working)}
-                        >
-                            {segment.working}
-                        </div>
-                    ))}
-                </div>
-                {/* Selected paragraph fixed in the center */}
-                {selected && (
-                    <div
-                        key={selected.id}
-                        ref={selectedParaRef}
-                        style={{
-                            display: 'flex',
-                            flexDirection: 'row',
-                            gap: '2rem',
-                            marginBottom: '1rem',
-                            backgroundColor: '#23272a',
-                            padding: '2rem',
-                            width: '100%',
-                            border: '2px solid #2e7d32',
-                            borderRadius: '8px',
-                            position: 'fixed',
-                            top: '50%',
-                            left: '50%',
-                            transform: 'translate(-50%, -50%)',
-                            zIndex: 100,
-                            maxWidth: 'calc(68ch * 2 + 2rem)',
-                        }}
-                    >
-                        <div
-                            onClick={() => handleSelection(selected.id, selected.original)}
-                            style={{
-                                backgroundColor: 'rgba(45, 45, 45, 0.5)',
-                                padding: '0.5rem',
-                                borderRadius: '4px',
-                                color: '#e0bfae',
-                                fontFamily: 'inherit',
-                                fontSize: 16,
-                                whiteSpace: 'pre-wrap',
-                                maxWidth: '68ch',
-                                flex: 1,
-                                cursor: 'pointer',
-                            }}
-                            onMouseEnter={(e) => {
-                                e.currentTarget.style.backgroundColor = 'rgba(45, 45, 45, 0.7)';
-                            }}
-                            onMouseLeave={(e) => {
-                                e.currentTarget.style.backgroundColor = 'rgba(45, 45, 45, 0.5)';
-                            }}
-                        >
-                            {selected.working}
-                        </div>
-                        <div
-                            onClick={() => handleSelection(selected.id, `AI suggestion for: "${selected.working.substring(0, 50)}..."`)}
-                            style={{
-                                backgroundColor: 'rgba(30, 60, 90, 0.25)',
-                                padding: '0.5rem',
-                                borderRadius: '4px',
-                                color: '#aee0bf',
-                                fontFamily: 'inherit',
-                                fontSize: 16,
-                                whiteSpace: 'pre-wrap',
-                                maxWidth: '68ch',
-                                flex: 1,
-                                borderLeft: '2px solid #3d3d3d',
-                                cursor: 'pointer',
-                            }}
-                            onMouseEnter={(e) => {
-                                e.currentTarget.style.backgroundColor = 'rgba(30, 60, 90, 0.35)';
-                            }}
-                            onMouseLeave={(e) => {
-                                e.currentTarget.style.backgroundColor = 'rgba(30, 60, 90, 0.25)';
-                            }}
-                        >
-                            {`AI suggestion for: "${selected.working.substring(0, 50)}..."`}
-                        </div>
-                    </div>
-                )}
-                {/* Below */}
-                <div style={{ width: '100%', marginTop: 'calc(50vh + 2rem)' }}>
-                    {below.map((segment, index) => (
-                        <div key={segment.id} style={{
-                            backgroundColor: selectedSegments.has(segment.id) ? 'rgba(30, 30, 30, 0.5)' : 'rgba(45, 45, 45, 0.2)',
-                            padding: '1rem',
-                            borderRadius: '4px',
-                            marginBottom: '1rem',
-                            color: '#e0bfae',
-                            fontFamily: 'inherit',
-                            fontSize: 16,
-                            whiteSpace: 'pre-wrap',
-                            maxWidth: '68ch',
-                            border: selectedSegments.has(segment.id) ? '1px solid rgba(174, 224, 191, 0.3)' : 'none',
-                            width: '100%',
-                            cursor: 'pointer',
-                        }}
-                            onClick={() => handleSelection(segment.id, segment.working)}
-                        >
-                            {segment.working}
-                        </div>
-                    ))}
-                </div>
-                {/* End buttons if at the last segment */}
-                {viewMode === 'edit' && cursorPosition === segments.length - 1 && (
-                    <div key="end-edit-buttons" style={{
-                        display: 'flex',
-                        flexDirection: 'row',
-                        justifyContent: 'center',
-                        alignItems: 'center',
-                        gap: '1rem',
-                        marginTop: '3rem',
-                        zIndex: 200,
-                    }}>
-                        <Button
-                            variant="soft"
-                            onClick={() => {
-                                setViewMode('document');
-                                forceUpdate(n => n + 1);
-                            }}
-                        >
-                            Go to Document View
-                        </Button>
-                        <Button
-                            variant="soft"
-                            onClick={handleCopy}
-                        >
-                            {copySuccess ? 'Copied!' : 'Copy to Clipboard'}
-                        </Button>
-                    </div>
-                )}
-            </div>
-        );
+    const handleSetViewModeDocument = () => {
+        setViewMode('document');
+        forceUpdate(n => n + 1);
     };
 
     return (
@@ -471,7 +218,7 @@ export default function Home() {
                 onCreateNewDocument={() => createNewDocument('', 'Untitled Document')}
                 isSidebarOpen={isSidebarOpen}
                 onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
-                onCopy={handleCopy}
+                onCopy={() => copyText(textManagerRef.current.getFullWorkingText())}
                 copySuccess={copySuccess}
             />
             <div
@@ -505,120 +252,22 @@ export default function Home() {
                         height: '100%',
                         overflow: viewMode === 'document' ? 'auto' : 'hidden'
                     }}>
-                        <Flex justify="between" align="center" style={{ marginBottom: '1rem' }}>
-                            <Link href="/" style={{ textDecoration: 'none' }}>
-                                <Text size="6" weight="bold" style={{
-                                    color: '#ffffff',
-                                    letterSpacing: '-0.02em',
-                                    background: 'linear-gradient(135deg, #ffffff 0%, #a0a0a0 100%)',
-                                    WebkitBackgroundClip: 'text',
-                                    WebkitTextFillColor: 'transparent',
-                                    textShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                                    cursor: 'pointer'
-                                }}>Parallax</Text>
-                            </Link>
-                            <Flex gap="2" align="center">
-                                <Flex gap="2" style={{ marginRight: '1rem' }}>
-                                    <Button
-                                        onClick={() => setViewMode('edit')}
-                                        variant="soft"
-                                        style={{
-                                            backgroundColor: viewMode === 'edit' ? '#2e7d32' : '#2d2d2d',
-                                            color: '#dcddde',
-                                            border: '1px solid #3d3d3d',
-                                            padding: '0.5rem 1rem',
-                                            borderRadius: '4px',
-                                            cursor: 'pointer',
-                                        }}
-                                    >
-                                        ✏️ Edit View
-                                    </Button>
-                                    <Button
-                                        onClick={() => {
-                                            setViewMode('document');
-                                            forceUpdate(n => n + 1);
-                                        }}
-                                        variant="soft"
-                                        style={{
-                                            backgroundColor: viewMode === 'document' ? '#2e7d32' : '#2d2d2d',
-                                            color: '#dcddde',
-                                            border: '1px solid #3d3d3d',
-                                            padding: '0.5rem 1rem',
-                                            borderRadius: '4px',
-                                            cursor: 'pointer',
-                                        }}
-                                    >
-                                        📄 Document View
-                                    </Button>
-                                </Flex>
-                                {viewMode === 'edit' && textManagerRef.current.getFullWorkingText().trim() === '' ? (
-                                    <div style={{
-                                        position: 'absolute',
-                                        top: '50%',
-                                        left: '50%',
-                                        transform: 'translate(-50%, -50%)',
-                                        zIndex: 100,
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        gap: '1rem',
-                                        alignItems: 'center',
-                                        padding: '2rem',
-                                        backgroundColor: 'rgba(30, 30, 30, 0.5)',
-                                        borderRadius: '8px',
-                                        backdropFilter: 'blur(8px)'
-                                    }}>
-                                        <Tooltip content={templateSuccess ? "Template loaded!" : "Load template content"}>
-                                            <Button
-                                                onClick={handleLoadTemplate}
-                                                variant="soft"
-                                                style={{
-                                                    backgroundColor: templateSuccess ? '#2e7d32' : '#2d2d2d',
-                                                    color: '#dcddde',
-                                                    border: '1px solid #3d3d3d',
-                                                    padding: '1rem 2rem',
-                                                    borderRadius: '8px',
-                                                    cursor: 'pointer',
-                                                    fontSize: '1.2rem',
-                                                    width: '300px'
-                                                }}
-                                            >
-                                                {templateSuccess ? '✓ Template Loaded!' : '📝 Load Template'}
-                                            </Button>
-                                        </Tooltip>
-                                        <Text size="2" style={{ color: '#a0a0a0' }}>or</Text>
-                                        <Tooltip content={pasteSuccess ? "Pasted!" : "Paste text from your clipboard (Ctrl+V)"}>
-                                            <Button
-                                                onClick={handlePaste}
-                                                variant="soft"
-                                                style={{
-                                                    backgroundColor: pasteSuccess ? '#2e7d32' : '#2d2d2d',
-                                                    color: '#dcddde',
-                                                    border: '1px solid #3d3d3d',
-                                                    padding: '1rem 2rem',
-                                                    borderRadius: '8px',
-                                                    cursor: 'pointer',
-                                                    fontSize: '1.2rem',
-                                                    width: '300px'
-                                                }}
-                                            >
-                                                {pasteSuccess ? '✓ Pasted!' : '📋 Paste from Clipboard'}
-                                            </Button>
-                                        </Tooltip>
-                                    </div>
-                                ) : (
-                                    <>
-                                        {validationErrors.length > 0 && (
-                                            <Tooltip content={validationErrors.join('\n')}>
-                                                <Text size="2" style={{ color: '#ff6b6b' }}>
-                                                    ⚠️ {validationErrors.length} validation {validationErrors.length === 1 ? 'error' : 'errors'}
-                                                </Text>
-                                            </Tooltip>
-                                        )}
-                                    </>
-                                )}
-                            </Flex>
-                        </Flex>
-
+                        <Header
+                            viewMode={viewMode}
+                            onViewModeChange={(mode) => {
+                                setViewMode(mode);
+                                if (mode === 'document') {
+                                    forceUpdate(n => n + 1);
+                                }
+                            }}
+                            textIsEmpty={textManagerRef.current.getFullWorkingText().trim() === ''}
+                            handleLoadTemplate={handleLoadTemplate}
+                            templateSuccess={templateSuccess}
+                            // Props for clipboard functionality using the hook
+                            onPasteDocument={pasteText}
+                            pasteDocumentSuccess={pasteSuccess}
+                            validationErrors={validationErrors}
+                        />
                         <div
                             ref={mainContainerRef}
                             style={{
@@ -635,25 +284,19 @@ export default function Home() {
                         >
                             {viewMode === 'document' ? (
                                 // Document view - show text in Obsidian-like format
-                                <div className="markdown-body" style={{
-                                    maxWidth: '68ch',
-                                    margin: '0 auto',
-                                    width: '100%',
-                                    fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-                                    fontSize: '16px',
-                                    lineHeight: '1.6',
-                                    color: '#dcddde',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    alignItems: 'center',
-                                }}>
-                                    <ReactMarkdown>
-                                        {textManagerRef.current.getFullWorkingText()}
-                                    </ReactMarkdown>
-                                </div>
+                                <DocumentView content={textManagerRef.current.getFullWorkingText()} />
                             ) : (
                                 // Edit view - show the comparison interface
-                                renderSegments()
+                                <EditView
+                                    textManager={textManagerRef.current}
+                                    cursorPosition={cursorPosition}
+                                    selectedSegments={selectedSegments}
+                                    onSegmentSelect={handleSelection}
+                                    onSetViewModeDocument={handleSetViewModeDocument}
+                                    onCopy={() => copyText(textManagerRef.current.getFullWorkingText())}
+                                    copySuccess={copySuccess}
+                                    selectedParaRef={selectedParaRef}
+                                />
                             )}
                         </div>
                     </Flex>
